@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 ### RAG Embedder Checkpoints
 
-Our framework supports various RAG embedders. Please specify their paths in the `algo/config.yaml` file.
+Our framework supports various RAG embedders. Please specify their paths in the `algo/config.py` file.
 
 | Embedder             | HF Checkpoints   |
 | -------------------- | ------------------- |
@@ -33,6 +33,8 @@ You can also integrate custom embedders by defining their identifier or model pa
 ## :test_tube: Trigger Optimization
 
 To properly evaluate our defense, you first need to generate the poison triggers that will be used in the attack simulation.
+
+> **Note:** The code under `algo/` (trigger optimization, embedder utilities, etc.) is adapted from [AgentPoison](https://github.com/AI-secure/AgentPoison). For questions specific to trigger generation, embedder training, or other `algo/` internals, please refer to the AgentPoison repository and its documentation/issues.
 
 Use the following command to run the trigger optimization process:
 ```bash
