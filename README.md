@@ -30,6 +30,59 @@ Our framework supports various RAG embedders. Please specify their paths in the 
 
 You can also integrate custom embedders by defining their identifier or model path in the [config file](algo/config.py).
 
+### vLLM Backend (Optional)
+
+The consistency checker in [EhrAgent/ehragent/consistency.py](EhrAgent/ehragent/consistency.py) and [ReAct/consistency.py](ReAct/consistency.py) can offload local LLM inference to a self-hosted [vLLM](https://github.com/vllm-project/vllm) server for much higher throughput. Because vLLM pins specific CUDA/PyTorch versions, we recommend running it in a dedicated environment and talking to it over HTTP from the main `a-memguard` env.
+
+**1. Create an isolated env and install vLLM:**
+```bash
+conda create -n a-memguard-vllm python=3.10 -y
+conda activate a-memguard-vllm
+pip install vllm
+```
+
+**2. Launch the OpenAI-compatible server:**
+```bash
+python vllm_backend/serve.py \
+    --model <hf_id_or_local_path> \
+    --port 8000 \
+```
+
+**3. Use the `VLLMModel` provider from the main env:**
+```python
+from consistency import VLLMModel, ConsistencyChecker
+
+provider = VLLMModel(model_name="<hf_id_or_local_path>", base_url="http://localhost:8000/v1")
+checker = ConsistencyChecker(model_provider=provider)
+```
+
+### Switching Model Backends in `consistency.py`
+
+Both `EhrAgent/ehragent/consistency.py` and `ReAct/consistency.py` expose three interchangeable providers — `HuggingFaceModel`, `OpenAIModel`, `VLLMModel` — plus a `build_provider(backend, model, ...)` factory.
+
+**As a library:**
+```python
+from consistency import build_provider, ConsistencyChecker
+
+provider = build_provider("vllm", model="<hf_id_or_local_path>", base_url="http://localhost:8000/v1")
+checker = ConsistencyChecker(model_provider=provider)
+```
+
+**As a CLI (runs the built-in demo with chosen backend):**
+```bash
+# Hugging Face local model
+python ReAct/consistency.py --backend hf --model /path/to/Llama-3.1-8B-Instruct
+
+# OpenAI API (reads OPENAI_API_KEY env var if --api-key not given)
+python ReAct/consistency.py --backend openai --model gpt-4o-mini
+
+# Self-hosted vLLM server (started via vllm_backend/serve.py)
+python ReAct/consistency.py --backend vllm --model <hf_id_or_local_path> \
+    --base-url http://localhost:8000/v1
+```
+
+Use `--method {llm,clustering}` to pick the consistency-checking strategy.
+
 ## :test_tube: Trigger Optimization
 
 To properly evaluate our defense, you first need to generate the poison triggers that will be used in the attack simulation.

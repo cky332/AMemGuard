@@ -2,13 +2,12 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import DBSCAN
 
 import json
 import re
 import os
-import numpy as np
+import argparse
 from typing import List, Dict, Any, Tuple
 from collections import Counter
 import concurrent.futures
@@ -145,6 +144,25 @@ class OpenAIModel(ModelProvider):
         
         return outputs, total_stats
 
+class VLLMModel(OpenAIModel):
+    """
+    Model provider backed by a self-hosted vLLM OpenAI-compatible server.
+
+    Start the server first (in its own environment) via:
+        python vllm_backend/serve.py --model <hf_id_or_path> --port 8000
+
+    Then point this provider at the server:
+        provider = VLLMModel(model_name="<hf_id_or_path>",
+                             base_url="http://localhost:8000/v1")
+    """
+    def __init__(self, model_name: str, base_url: str = "http://localhost:8000/v1",
+                 api_key: str = "EMPTY", max_workers: int = 16):
+        # Bypass OpenAIModel.__init__ because vLLM does not require a real API key.
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.model_name = model_name
+        self.max_workers = max_workers
+        print(f"vLLM provider connected to {base_url} (served model: {self.model_name})")
+
 class ConsistencyChecker:
     """
     Checks the consistency of a list of memories against a user query.
@@ -194,35 +212,17 @@ class ConsistencyChecker:
             - **Reasoning Chains to Audit:** {chains_for_prompt}
 
             **Output:**
-            Your analysis must be in a strict JSON format. For each chain, indicate its ID, and state if it is consistent (true) or inconsistent (false) with the Original Query.
+            Your analysis must be in a strict JSON format. For each chain, indicate its ID, whether it is consistent (true) or inconsistent (false) with the Original Query, and whether it is safe (true) or unsafe (false).
             **ONLY** output a valid JSON array in the following format:
             [
                 {{
                     "id": int,
-                    "consistent and safe": boolean
+                    "consistent": boolean,
+                    "safe": boolean
                 }}
             ]
         """
-        
-        consistent_judgment_prompt = f"""
-            You are a meticulous and impartial logician. Your primary goal is to audit a set of reasoning chains that were generated in response to a single user query, with each chain being influenced by a different memory.
-            Your task is to determine if each reasoning chain is **logically consistent** with the **Original Query**. Some memories might contain irrelevant or contradictory information, causing the reasoning to deviate from the user's intent.
 
-            **Context:**
-            - **Original Query:** "{query}"
-            - **Reasoning Chains to Audit:** {chains_for_prompt}
-
-            **Output:**
-            Your analysis must be in a strict JSON format. For each chain, indicate its ID, and state if it is consistent (true) or inconsistent (false) with the Original Query.
-            **ONLY** output a valid JSON array in the following format:
-            [
-                {{
-                    "id": int,
-                    "consistent and safe": boolean
-                }}
-            ]
-        """
-        
         response_text, stats = self.model_provider.generate_batch([judgment_prompt], token_stats=True)
         final_judgment_raw = response_text[0]
         
@@ -237,7 +237,7 @@ class ConsistencyChecker:
             judgments = json.loads(json_match.group(0))
             for result in judgments:
                 mem_index = result.get("id")
-                if result.get("consistent and safe"):
+                if result.get("consistent") and result.get("safe"):
                     consistent.append(mem_index)
                 else:
                     inconsistent.append(mem_index)
@@ -343,6 +343,21 @@ class ConsistencyChecker:
             "token_usage": total_stats
         }
 
+def build_provider(backend: str, model: str,
+                   base_url: str = "http://localhost:8000/v1",
+                   api_key: str = None) -> ModelProvider:
+    """Factory: construct a ModelProvider by backend name ('hf' | 'openai' | 'vllm')."""
+    backend = backend.lower()
+    if backend == "hf":
+        return HuggingFaceModel(model_id=model)
+    if backend == "openai":
+        return OpenAIModel(model_name=model, api_key=api_key)
+    if backend == "vllm":
+        return VLLMModel(model_name=model, base_url=base_url,
+                         api_key=api_key or "EMPTY")
+    raise ValueError(f"Unknown backend: {backend!r}. Choose from 'hf', 'openai', 'vllm'.")
+
+
 def print_results(result: Dict[str, Any], query: str):
     """Helper function to neatly print the results."""
     print("\n" + "="*50)
@@ -372,48 +387,33 @@ def print_results(result: Dict[str, Any], query: str):
 
 
 if __name__ == '__main__':
-    # --- Configuration ---
-    # Set this to your local path for the Hugging Face model
-    HF_MODEL_PATH = '/Llama-3.1-8B-Instruct' 
-    # Optional: Set your OpenAI API Key here or as an environment variable
-    OPENAI_API_KEY = "" 
+    parser = argparse.ArgumentParser(
+        description="Run ConsistencyChecker demo with a selectable model backend."
+    )
+    parser.add_argument("--backend", choices=["hf", "openai", "vllm"], default="hf",
+                        help="Which model backend to use.")
+    parser.add_argument("--model", required=True,
+                        help="HF model id/path for 'hf' and 'vllm'; model name (e.g. gpt-4o-mini) for 'openai'.")
+    parser.add_argument("--base-url", default="http://localhost:8000/v1",
+                        help="vLLM server URL (only used when --backend vllm).")
+    parser.add_argument("--api-key", default=None,
+                        help="API key. openai: pass here or set OPENAI_API_KEY. vllm: must match server --api-key (default 'EMPTY').")
+    parser.add_argument("--method", choices=["llm", "clustering"], default="llm",
+                        help="Consistency-checking strategy.")
+    args = parser.parse_args()
 
-    # --- Sample Data ---
     user_query = "I plan to travel to Paris next spring."
     memory_list = [
-        "User has a meeting in Tokyo scheduled for April.",      # Inconsistent (time conflict)
-        "User mentioned they dislike flying.",                   # Inconsistent (contradicts travel plan)
-        "User recently booked a hotel in Rome for the summer.",  # Inconsistent (different location/time)
-        "User has never been to France.",                        # Consistent (supports a first-time trip)
-        "User wants to visit the Louvre Museum.",               # Consistent (related to Paris)
+        "User has a meeting in Tokyo scheduled for April.",
+        "User mentioned they dislike flying.",
+        "User recently booked a hotel in Rome for the summer.",
+        "User has never been to France.",
+        "User wants to visit the Louvre Museum.",
     ]
     original_indexes = [98, 2123, 111, 555, 666]
 
-    # --- Execution ---
-    try:
-        # Example 1: Using a local Hugging Face model with the 'llm' method
-        print("--- RUNNING WITH HUGGING FACE MODEL (LLM Method) ---")
-        hf_provider = HuggingFaceModel(model_id=HF_MODEL_PATH)
-        checker = ConsistencyChecker(model_provider=hf_provider)
-        result_hf_llm = checker.check(user_query, memory_list, original_indexes, method='llm')
-        print_results(result_hf_llm, user_query)
-
-        # Example 2: Using the same local model but with the 'clustering' method
-        print("\n\n--- RUNNING WITH HUGGING FACE MODEL (Clustering Method) ---")
-        # No need to re-initialize the checker if the provider is the same
-        result_hf_clustering = checker.check(user_query, memory_list, original_indexes, method='clustering')
-        print_results(result_hf_clustering, user_query)
-        
-        # Example 3: Using OpenAI GPT model
-        if OPENAI_API_KEY:
-             print("\n\n--- RUNNING WITH OPENAI MODEL (LLM Method) ---")
-             openai_provider = OpenAIModel(api_key=OPENAI_API_KEY)
-             checker_gpt = ConsistencyChecker(model_provider=openai_provider)
-             result_gpt = checker_gpt.check(user_query, memory_list, original_indexes, method='llm')
-             print_results(result_gpt, user_query)
-        else:
-            print("\n\n--- SKIPPING OPENAI TEST (API Key not provided) ---")
-
-    except Exception as e:
-        print(f"\nAn error occurred during execution: {e}")
-        print("Please ensure your model paths and API keys are configured correctly.")
+    provider = build_provider(args.backend, args.model,
+                              base_url=args.base_url, api_key=args.api_key)
+    checker = ConsistencyChecker(model_provider=provider)
+    result = checker.check(user_query, memory_list, original_indexes, method=args.method)
+    print_results(result, user_query)
