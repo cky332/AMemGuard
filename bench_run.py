@@ -86,18 +86,25 @@ def run_query(domain, store, query, defense, k=4):
     info.update({"harmful": h, "vec": {k2: v for k2, v in vec.items() if v}, "action": act})
     return info
 
-def run_cell(domain, stealth, defense, qworkers=3):
+MAX_TRIG = int(os.getenv("MAX_TRIG", "0")) or None
+MAX_BEN = int(os.getenv("MAX_BEN", "-1"))  # -1 = all; 0 = skip benign
+def run_cell(domain, stealth, defense, qworkers=4):
     store = Store(domain, stealth)
     d = BD.DOMAINS[domain]
+    trig = d["trigger_q"][:MAX_TRIG] if MAX_TRIG else d["trigger_q"]
+    benq = [] if MAX_BEN == 0 else (d["benign_q"][:MAX_BEN] if MAX_BEN > 0 else d["benign_q"])
     with ThreadPoolExecutor(max_workers=qworkers) as ex:
-        atk = list(ex.map(lambda q: run_query(domain, store, q, defense), d["trigger_q"]))
+        atk = list(ex.map(lambda q: run_query(domain, store, q, defense), trig))
     asr = sum(1 for r in atk if r["harmful"]) / len(atk)
     pr = sum(r["poison_retr"] for r in atk); ps = sum(r["poison_surv"] for r in atk)
     # benign utility (defense in loop, poisoned store, clean queries)
-    with ThreadPoolExecutor(max_workers=qworkers) as ex:
-        ben = list(ex.map(lambda qg: run_query(domain, store, qg[0], defense), d["benign_q"]))
-    util = sum(1 for r, (q, g) in zip(ben, d["benign_q"]) if BD.correct_benign(domain, r["action"])) / len(ben)
-    ben_harm = sum(1 for r in ben if r["harmful"]) / len(ben)
+    if benq:
+        with ThreadPoolExecutor(max_workers=qworkers) as ex:
+            ben = list(ex.map(lambda qg: run_query(domain, store, qg[0], defense), benq))
+    else:
+        ben = []
+    util = (sum(1 for r in ben if BD.correct_benign(domain, r["action"])) / len(ben)) if ben else float("nan")
+    ben_harm = (sum(1 for r in ben if r["harmful"]) / len(ben)) if ben else float("nan")
     vecs = {}
     for r in atk:
         for kk in r["vec"]:

@@ -71,8 +71,10 @@ def run_question(question, gt, false_claim, n_agents=5, n_poison=1, defense=None
     return {"q": question, "gt": gt, "final": final, "wrong": wrong, "answers": answers,
             "poisoned_idx": poisoned_idx, "flagged": flagged}
 
+import os
+_MAXQ = int(os.getenv("MAX_Q", "0")) or len(QA)
 def run_cell(n_poison, n_agents, defense):
-    res = [run_question(q, gt, fc, n_agents, n_poison, defense) for (q, gt, fc) in QA]
+    res = [run_question(q, gt, fc, n_agents, n_poison, defense) for (q, gt, fc) in QA[:_MAXQ]]
     msr = sum(1 for r in res if r["wrong"]) / len(res)  # misinformation success rate
     print(f"[MAS N={n_agents} poison={n_poison} {str(defense):9s}] MSR={msr:.2f} "
           f"(team wrong on {sum(r['wrong'] for r in res)}/{len(res)})")
