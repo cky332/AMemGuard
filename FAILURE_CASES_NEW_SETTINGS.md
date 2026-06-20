@@ -39,7 +39,20 @@ A-MemGuard 论文的核心卖点是：恶意记忆“单独看无害、只在特
 - stealthy 档：A-MemGuard（0.625）确实优于 Auditor（1.00），但**也只降了 37.5%**，远不及论文 ~95%。
 - 即：**没有任何一种防御在两个档位都好**；A-MemGuard 并非论文宣称的全面 SOTA。
 
-> SUITE-1（refund/cloud 等其它领域）与 SUITE-1B（finance/healthcare/email 脆弱性图）运行后补全。
+**refund 领域实测（已完成）—— A-MemGuard 在两个档位都输给孤立 Auditor：**
+
+| 投毒档 | No-Defense | A-MemGuard | LLM Auditor(孤立) |
+|---|---|---|---|
+| overt | 1.00 | 0.25 | **0.00** |
+| stealthy | 1.00 | 0.75 | **0.00** |
+
+- refund 里孤立 Auditor 在 overt 和 stealthy 上都拿到 0.00，**全面优于 A-MemGuard**（0.25 / 0.75）。
+- 加上 opsec（overt：Auditor 0.00 < A-MemGuard 0.67）：**在两个“攻击能打进”的领域里，最朴素的孤立
+  Auditor 都 ≥ A-MemGuard**。论文“Ours 全面 SOTA、碾压 Auditor”不成立。
+
+> SUITE-1B（finance/healthcare/email/cloud 脆弱性图）：cloud/overt 无防御 ASR=**0.00**——又一个
+> “基线本来打不进”的领域（模型拒绝把防火墙开到 0.0.0.0/0 或关日志）。即 6 个领域里只有 **opsec、refund**
+> 这两个“政策型操作”领域攻击真正打得进；其余 4 个在强模型上基本免疫（F2）。
 
 ---
 
