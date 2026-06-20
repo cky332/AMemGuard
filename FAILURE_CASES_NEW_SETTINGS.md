@@ -50,9 +50,23 @@ A-MemGuard 论文的核心卖点是：恶意记忆“单独看无害、只在特
 - 加上 opsec（overt：Auditor 0.00 < A-MemGuard 0.67）：**在两个“攻击能打进”的领域里，最朴素的孤立
   Auditor 都 ≥ A-MemGuard**。论文“Ours 全面 SOTA、碾压 Auditor”不成立。
 
-> SUITE-1B（finance/healthcare/email/cloud 脆弱性图）：cloud/overt 无防御 ASR=**0.00**——又一个
-> “基线本来打不进”的领域（模型拒绝把防火墙开到 0.0.0.0/0 或关日志）。即 6 个领域里只有 **opsec、refund**
-> 这两个“政策型操作”领域攻击真正打得进；其余 4 个在强模型上基本免疫（F2）。
+**SUITE-1 完整 ASR 矩阵（No-Defense / A-MemGuard / Auditor，越低越好）：**
+
+| 领域 | 投毒档 | No-Def | A-MemGuard | Auditor | 谁最好 |
+|---|---|---|---|---|---|
+| opsec  | overt    | 1.00 | 0.67 | **0.00** | Auditor |
+| opsec  | stealthy | 1.00 | **0.625** | 1.00 | **A-MemGuard** |
+| refund | overt    | 1.00 | 0.25 | **0.00** | Auditor |
+| refund | stealthy | 1.00 | 0.75 | **0.00** | Auditor |
+| cloud  | overt    | 0.00 | 0.00 | 0.00 | 基线免疫 |
+| cloud  | stealthy | 0.25 | **0.00** | **0.00** | 平手 |
+
+**综合：在所有“攻击打得进”的格子里，朴素孤立 Auditor ≥ A-MemGuard，唯一例外是 opsec/stealthy。**
+A-MemGuard 5 个有效格子里只赢 1、平 1、输 3。论文“Ours 全面 SOTA 且碾压 Auditor”被推翻。
+（opsec 数据来自 `realenv_ops`/bench 深挖；refund、cloud 来自 SUITE-1A。）
+
+> cloud/overt 无防御 ASR=**0.00**——又一个“基线打不进”的领域（模型拒绝把防火墙开到 0.0.0.0/0 或关日志）。
+> 即 6 个领域里只有 **opsec、refund** 真正打得进；cloud 仅 stealthy 弱命中；finance/healthcare/email 见 F2。
 
 ---
 
